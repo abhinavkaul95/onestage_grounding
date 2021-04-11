@@ -19,6 +19,8 @@ import time
 from pytorch_pretrained_bert.tokenization import BertTokenizer
 from pytorch_pretrained_bert.modeling import BertModel
 
+from matplotlib import pyplot as plt
+
 def generate_coord(batch, height, width):
     # coord = Variable(torch.zeros(batch,8,height,width).cuda())
     xv, yv = torch.meshgrid([torch.arange(0,height), torch.arange(0,width)])
@@ -192,8 +194,22 @@ class grounding_model(nn.Module):
         ## Visual Module
         ## [1024, 13, 13], [512, 26, 26], [256, 52, 52]
         batch_size = image.size(0)
+#        with torch.no_grad():
         raw_fvisu = self.visumodel(image)
+        #raw_fvisu = [feat.to('cuda:0') for feat in self.visumodel(image.to('cuda:1'))]
         fvisu = []
+        '''if int(im_id) in [1871, 2998, 3096, 3990, 6292, 7803, 9285, 9538, 9855, 19135, 19298, 20160, 27247, 37455, 40375]:
+            for i, fmap in enumerate(raw_fvisu):
+                ix = 1
+                for _ in range(3):
+                    for _ in range(3):
+                        ax = plt.subplot(3, 3, ix)
+                        ax.set_xticks([])
+                        ax.set_yticks([])
+                        plt.imshow(fmap[0, ix-1,:, :].cpu(), cmap='gray')
+                        ix += 1
+                plt.savefig("img_feat_maps/"+im_id+"_"+str(i)+".jpg")'''
+
         for ii in range(len(raw_fvisu)):
             fvisu.append(self.mapping_visu._modules[str(ii)](raw_fvisu[ii]))
             fvisu[ii] = F.normalize(fvisu[ii], p=2, dim=1)

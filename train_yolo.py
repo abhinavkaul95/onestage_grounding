@@ -137,7 +137,7 @@ def build_target(raw_coord, pred):
                 x[1] / (args.anchor_imsize/grid)) for x in anchors]
 
             ## Get shape of gt box
-            gt_box = torch.FloatTensor(np.array([0, 0, gw, gh])).unsqueeze(0)
+            gt_box = torch.FloatTensor(np.array([0, 0, gw.item(), gh.item()])).unsqueeze(0)
             ## Get shape of anchor box
             anchor_shapes = torch.FloatTensor(np.concatenate((np.zeros((len(scaled_anchors), 2)), np.array(scaled_anchors)), 1))
             ## Calculate iou between gt and anchor shapes
@@ -227,12 +227,14 @@ def main():
 
     eps=1e-10
     ## following anchor sizes calculated by kmeans under args.anchor_imsize=416
-    if args.dataset=='refeit':
+    if args.dataset=='referit':
         anchors = '30,36,  78,46,  48,86,  149,79,  82,148,  331,93,  156,207,  381,163,  329,285'
     elif args.dataset=='flickr':
         anchors = '29,26,  55,58,  137,71,  82,121,  124,205,  204,132,  209,263,  369,169,  352,294'
     else:
         anchors = '10,13,  16,30,  33,23,  30,61,  62,45,  59,119,  116,90,  156,198,  373,326'
+    
+    #anchors = '18,22,  48,28,  29,52,  91,48,  50,91,  203,57,  96,127,  234,100,  202,175'
     anchors = [float(x) for x in anchors.split(',')]
     anchors_full = [(anchors[i], anchors[i + 1]) for i in range(0, len(anchors), 2)][::-1]
 
@@ -402,7 +404,7 @@ def train_epoch(train_loader, model, optimizer, epoch, size_average):
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
-        losses.update(loss.data[0], imgs.size(0))
+        losses.update(loss.item(), imgs.size(0))
 
         ## training offset eval: if correct with gt center loc
         ## convert offset pred to boxes
@@ -432,7 +434,7 @@ def train_epoch(train_loader, model, optimizer, epoch, size_average):
             gt_conf_list.append(gt_param[ii][:,:,4,:,:].contiguous().view(args.batch_size,-1))
         pred_conf = torch.cat(pred_conf_list, dim=1)
         gt_conf = torch.cat(gt_conf_list, dim=1)
-        accu_center = np.sum(np.array(pred_conf.max(1)[1] == gt_conf.max(1)[1], dtype=float))/args.batch_size
+        accu_center = np.sum(np.array((pred_conf.max(1)[1] == gt_conf.max(1)[1]).cpu(), dtype=float))/args.batch_size
         ## metrics
         miou.update(iou.data[0], imgs.size(0))
         acc.update(accu, imgs.size(0))
@@ -576,6 +578,7 @@ def validate_epoch(val_loader, model, size_average, mode='val'):
     return acc.avg
 
 def test_epoch(val_loader, model, size_average, mode='test'):
+    logging.info("Starting evaluation for test split")
     batch_time = AverageMeter()
     data_time = AverageMeter()
     losses = AverageMeter()
@@ -586,7 +589,7 @@ def test_epoch(val_loader, model, size_average, mode='test'):
     model.eval()
     end = time.time()
 
-    for batch_idx, (imgs, word_id, word_mask, bbox, ratio, dw, dh, im_id) in enumerate(val_loader):
+    for batch_idx, (imgs,word, word_id, word_mask, bbox, ratio, dw, dh, im_id) in enumerate(val_loader):
         imgs = imgs.cuda()
         word_id = word_id.cuda()
         word_mask = word_mask.cuda()
@@ -600,6 +603,7 @@ def test_epoch(val_loader, model, size_average, mode='test'):
         with torch.no_grad():
             ## Note LSTM does not use word_mask
             pred_anchor = model(image, word_id, word_mask)
+        
         for ii in range(len(pred_anchor)):
             pred_anchor[ii] = pred_anchor[ii].view(   \
                     pred_anchor[ii].size(0),3,5,pred_anchor[ii].size(2),pred_anchor[ii].size(3))
@@ -704,9 +708,29 @@ def test_epoch(val_loader, model, size_average, mode='test'):
     print(np.array(target_gi), np.array(pred_gi))
     print(np.array(target_gj), np.array(pred_gj),'-')
     print(acc.avg, miou.avg,acc_center.avg)
-    logging.info("%f,%f,%f"%(acc.avg, float(miou.avg),acc_center.avg))
+    logging.info("Av acc: %f, Av iou: %f, Av acc_center: %f"%(acc.avg, float(miou.avg),acc_center.avg))
     return acc.avg
 
 
 if __name__ == "__main__":
     main()
+
+def save_plot(output):
+    ix = 1
+    total = 0
+    each = 4
+    if not os.path.exists('fmaps'):
+        os.makedirs('fmaps')
+    while total < output.shape[0]: 
+        for _ in range(each):
+            for _ in range(each):
+                if total < output.shape[0]:
+                    ax = plt.subplot(each, each, ix)
+                    ax.set_xticks([])
+                    ax.set_yticks([])
+                    plt.imshow(output[total,:, :].cpu(), cmap='gray')
+                ix += 1
+                total += 1
+        plt.savefig("fmaps/"+str(total//each**2)+".jpg")
+        print(ix, total)
+        ix = 1

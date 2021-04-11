@@ -301,7 +301,7 @@ class ReferDataset(data.Dataset):
             img, _, ratio, dw, dh = letterbox(img, None, self.imsize)
             bbox[0], bbox[2] = bbox[0]*ratio+dw, bbox[2]*ratio+dw
             bbox[1], bbox[3] = bbox[1]*ratio+dh, bbox[3]*ratio+dh
-
+        word = phrase 
         ## Norm, to tensor
         if self.transform is not None:
             img = self.transform(img)
@@ -317,7 +317,7 @@ class ReferDataset(data.Dataset):
             word_id = features[0].input_ids
             word_mask = features[0].input_mask
         if self.testmode:
-            return img, np.array(word_id, dtype=int), np.array(word_mask, dtype=int), \
+            return img,phrase, np.array(word_id, dtype=int), np.array(word_mask, dtype=int), \
                 np.array(bbox, dtype=np.float32), np.array(ratio, dtype=np.float32), \
                 np.array(dw, dtype=np.float32), np.array(dh, dtype=np.float32), self.images[idx][0]
         else:
