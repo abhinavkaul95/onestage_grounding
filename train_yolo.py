@@ -241,8 +241,6 @@ def main():
         anchors = '29,26,  55,58,  137,71,  82,121,  124,205,  204,132,  209,263,  369,169,  352,294'
     else:
         anchors = '10,13,  16,30,  33,23,  30,61,  62,45,  59,119,  116,90,  156,198,  373,326'
-
-    # anchors = '18,22,  48,28,  29,52,  91,48,  50,91,  203,57,  96,127,  234,100,  202,175'
     anchors = [float(x) for x in anchors.split(',')]
     anchors_full = [(anchors[i], anchors[i + 1]) for i in range(0, len(anchors), 2)][::-1]
 
@@ -726,7 +724,6 @@ def test_epoch(val_loader, model, size_average, mode='test'):
 
 if __name__ == "__main__":
     main()
-
 
 # def save_plot(output):
 #     ix = 1
