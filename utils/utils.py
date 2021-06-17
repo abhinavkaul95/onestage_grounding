@@ -1,9 +1,6 @@
-import random
-
-import cv2
 import numpy as np
 import torch
-import torch.nn.functional as F
+
 
 class AverageMeter(object):
     """Computes and stores the average and current value"""
@@ -22,6 +19,7 @@ class AverageMeter(object):
         self.count += n
         self.avg = self.sum / self.count
 
+
 def xyxy2xywh(x):  # Convert bounding box format from [x1, y1, x2, y2] to [x, y, w, h]
     y = torch.zeros(x.shape) if x.dtype is torch.float32 else np.zeros(x.shape)
     y[:, 0] = (x[:, 0] + x[:, 2]) / 2
@@ -38,6 +36,7 @@ def xywh2xyxy(x):  # Convert bounding box format from [x, y, w, h] to [x1, y1, x
     y[:, 2] = (x[:, 0] + x[:, 2] / 2)
     y[:, 3] = (x[:, 1] + x[:, 3] / 2)
     return y
+
     
 def bbox_iou_numpy(box1, box2):
     """Computes IoU between bounding boxes.
@@ -64,7 +63,8 @@ def bbox_iou_numpy(box1, box2):
     iw = np.maximum(iw, 0)
     ih = np.maximum(ih, 0)
 
-    ua = np.expand_dims((box1[:, 2] - box1[:, 0]) * (box1[:, 3] - box1[:, 1]), axis=1) + area - iw * ih
+    ua = np.expand_dims((box1[:, 2] - box1[:, 0])
+                        * (box1[:, 3] - box1[:, 1]), axis=1) + area - iw * ih
 
     ua = np.maximum(ua, np.finfo(float).eps)
 
@@ -94,7 +94,8 @@ def bbox_iou(box1, box2, x1y1x2y2=True):
     inter_rect_x2 = torch.min(b1_x2, b2_x2)
     inter_rect_y2 = torch.min(b1_y2, b2_y2)
     # Intersection area
-    inter_area = torch.clamp(inter_rect_x2 - inter_rect_x1, 0) * torch.clamp(inter_rect_y2 - inter_rect_y1, 0)
+    inter_area = torch.clamp(inter_rect_x2 - inter_rect_x1, 0) *\
+                 torch.clamp(inter_rect_y2 - inter_rect_y1, 0)
     # Union Area
     b1_area = (b1_x2 - b1_x1) * (b1_y2 - b1_y1)
     b2_area = (b2_x2 - b2_x1) * (b2_y2 - b2_y1)

@@ -1,50 +1,50 @@
+import argparse
 from collections import OrderedDict
+import numpy as np
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torch.utils.model_zoo as model_zoo
 from torch.utils.data import TensorDataset, DataLoader, SequentialSampler
 from torch.utils.data.distributed import DistributedSampler
-
-from .darknet import *
-
-import argparse
-import collections
-import logging
-import json
-import re
-import time
 ## can be commented if only use LSTM encoder
 from pytorch_pretrained_bert.tokenization import BertTokenizer
 from pytorch_pretrained_bert.modeling import BertModel
 
+from .darknet import Darknet, ConvBatchNormReLU
+
+
 def generate_coord(batch, height, width):
     # coord = Variable(torch.zeros(batch,8,height,width).cuda())
-    xv, yv = torch.meshgrid([torch.arange(0,height), torch.arange(0,width)])
+    xv, yv = torch.meshgrid([torch.arange(0, height), torch.arange(0, width)])
     xv_min = (xv.float()*2 - width)/width
     yv_min = (yv.float()*2 - height)/height
     xv_max = ((xv+1).float()*2 - width)/width
     yv_max = ((yv+1).float()*2 - height)/height
     xv_ctr = (xv_min+xv_max)/2
     yv_ctr = (yv_min+yv_max)/2
-    hmap = torch.ones(height,width)*(1./height)
-    wmap = torch.ones(height,width)*(1./width)
-    coord = torch.autograd.Variable(torch.cat([xv_min.unsqueeze(0), yv_min.unsqueeze(0),\
-        xv_max.unsqueeze(0), yv_max.unsqueeze(0),\
-        xv_ctr.unsqueeze(0), yv_ctr.unsqueeze(0),\
-        hmap.unsqueeze(0), wmap.unsqueeze(0)], dim=0).cuda())
-    coord = coord.unsqueeze(0).repeat(batch,1,1,1)
+    hmap = torch.ones(height, width)*(1./height)
+    wmap = torch.ones(height, width)*(1./width)
+    coord = torch.autograd.Variable(
+        torch.cat([xv_min.unsqueeze(0), yv_min.unsqueeze(0),
+                   xv_max.unsqueeze(
+                       0), yv_max.unsqueeze(0),
+                   xv_ctr.unsqueeze(
+                       0), yv_ctr.unsqueeze(0),
+                   hmap.unsqueeze(0), wmap.unsqueeze(0)], dim=0).cuda())
+    coord = coord.unsqueeze(0).repeat(batch, 1, 1, 1)
     return coord
 
+
 class RNNEncoder(nn.Module):
-    def __init__(self, vocab_size, word_embedding_size, word_vec_size, hidden_size, bidirectional=False,
-               input_dropout_p=0, dropout_p=0, n_layers=1, rnn_type='lstm', variable_lengths=True):
+    def __init__(self, vocab_size, word_embedding_size, word_vec_size,
+                 hidden_size, bidirectional=False, input_dropout_p=0, dropout_p=0,
+                 n_layers=1, rnn_type='lstm', variable_lengths=True):
         super(RNNEncoder, self).__init__()
         self.variable_lengths = variable_lengths
         self.embedding = nn.Embedding(vocab_size, word_embedding_size)
         self.input_dropout = nn.Dropout(input_dropout_p)
-        self.mlp = nn.Sequential(nn.Linear(word_embedding_size, word_vec_size), 
+        self.mlp = nn.Sequential(nn.Linear(word_embedding_size, word_vec_size),
                                  nn.ReLU())
         self.rnn_type = rnn_type
         self.rnn = getattr(nn, rnn_type.upper())(word_vec_size, hidden_size, n_layers,
@@ -63,14 +63,17 @@ class RNNEncoder(nn.Module):
         - embedded: Variable float (batch, max_len, word_vec_size)
         """
         if self.variable_lengths:
-            input_lengths = (input_labels!=0).sum(1)  # Variable (batch, )
+            input_lengths = (input_labels != 0).sum(1)  # Variable (batch, )
 
             # make ixs
             input_lengths_list = input_lengths.data.cpu().numpy().tolist()
-            sorted_input_lengths_list = np.sort(input_lengths_list)[::-1].tolist() # list of sorted input_lengths
-            sort_ixs = np.argsort(input_lengths_list)[::-1].tolist() # list of int sort_ixs, descending
-            s2r = {s: r for r, s in enumerate(sort_ixs)} # O(n)
-            recover_ixs = [s2r[s] for s in range(len(input_lengths_list))]  # list of int recover ixs
+            # list of sorted input_lengths
+            sorted_input_lengths_list = np.sort(input_lengths_list)[::-1].tolist()
+            # list of int sort_ixs, descending
+            sort_ixs = np.argsort(input_lengths_list)[::-1].tolist()
+            s2r = {s: r for r, s in enumerate(sort_ixs)}  # O(n)
+            recover_ixs = [s2r[s]
+                           for s in range(len(input_lengths_list))]  # list of int recover ixs
             assert max(input_lengths_list) == input_labels.size(1)
 
             # move to long tensor
@@ -85,44 +88,51 @@ class RNNEncoder(nn.Module):
         embedded = self.input_dropout(embedded)  # (n, seq_len, word_embedding_size)
         embedded = self.mlp(embedded)            # (n, seq_len, word_vec_size)
         if self.variable_lengths:
-            embedded = nn.utils.rnn.pack_padded_sequence(embedded, sorted_input_lengths_list, batch_first=True)
+            embedded = nn.utils.rnn.pack_padded_sequence(embedded,
+                                                         sorted_input_lengths_list,
+                                                         batch_first=True)
         # forward rnn
         output, hidden = self.rnn(embedded)
         # recover
         if self.variable_lengths:
             # recover rnn
-            output, _ = nn.utils.rnn.pad_packed_sequence(output, batch_first=True) # (batch, max_len, hidden)
+            output, _ = nn.utils.rnn.pad_packed_sequence(
+                output, batch_first=True)  # (batch, max_len, hidden)
             output = output[recover_ixs]
         sent_output = []
         for ii in range(output.shape[0]):
-            sent_output.append(output[ii,int(input_lengths_list[ii]-1),:])
+            sent_output.append(output[ii, int(input_lengths_list[ii]-1), :])
         return torch.stack(sent_output, dim=0)
 
-class grounding_model(nn.Module):
-    def __init__(self, corpus=None, emb_size=256, jemb_drop_out=0.1, bert_model='bert-base-uncased', \
-     coordmap=True, leaky=False, dataset=None, light=False):
-        super(grounding_model, self).__init__()
+
+class GroundingModel(nn.Module):
+    def __init__(self, corpus=None, emb_size=256, jemb_drop_out=0.1,
+                 bert_model='bert-base-uncased', coordmap=True, leaky=False,
+                 dataset=None, light=False, enc_input_drop_out=0.2,
+                 enc_drop_out=0.2):
+        super(GroundingModel, self).__init__()
         self.coordmap = coordmap
         self.light = light
         self.lstm = (corpus is not None)
         self.emb_size = emb_size
-        if bert_model=='bert-base-uncased':
-            self.textdim=768
+        if bert_model == 'bert-base-uncased':
+            self.textdim = 768
         else:
-            self.textdim=1024
+            self.textdim = 1024
         ## Visual model
         self.visumodel = Darknet(config_path='./model/yolov3.cfg')
         self.visumodel.load_weights('./saved_models/yolov3.weights')
         ## Text model
         if self.lstm:
-            self.textdim, self.embdim=1024, 512
+            self.textdim, self.embdim = 1024, 512
             self.textmodel = RNNEncoder(vocab_size=len(corpus),
-                                          word_embedding_size=self.embdim,
-                                          word_vec_size=self.textdim//2,
-                                          hidden_size=self.textdim//2,
-                                          bidirectional=True,
-                                          input_dropout_p=0.2,
-                                          variable_lengths=True)
+                                        word_embedding_size=self.embdim,
+                                        word_vec_size=self.textdim//2,
+                                        hidden_size=self.textdim//2,
+                                        bidirectional=True,
+                                        input_dropout_p=enc_input_drop_out,
+                                        dropout_p=enc_drop_out,
+                                        variable_lengths=True)
         else:
             self.textmodel = BertModel.from_pretrained(bert_model)
 
@@ -132,18 +142,16 @@ class grounding_model(nn.Module):
             ('1', ConvBatchNormReLU(512, emb_size, 1, 1, 0, 1, leaky=leaky)),
             ('2', ConvBatchNormReLU(256, emb_size, 1, 1, 0, 1, leaky=leaky))
         ]))
-        self.mapping_lang = torch.nn.Sequential(
-          nn.Linear(self.textdim, emb_size),
-          nn.BatchNorm1d(emb_size),
-          nn.ReLU(),
-          nn.Dropout(jemb_drop_out),
-          nn.Linear(emb_size, emb_size),
-          nn.BatchNorm1d(emb_size),
-          nn.ReLU(),
-        )
+        self.mapping_lang = torch.nn.Sequential(nn.Linear(self.textdim, emb_size),
+                                                nn.BatchNorm1d(emb_size),
+                                                nn.ReLU(),
+                                                nn.Dropout(jemb_drop_out),
+                                                nn.Linear(emb_size, emb_size),
+                                                nn.BatchNorm1d(emb_size),
+                                                nn.ReLU())
         embin_size = emb_size*2
         if self.coordmap:
-            embin_size+=8
+            embin_size += 8
         if self.light:
             self.fcn_emb = nn.Sequential(OrderedDict([
                 ('0', torch.nn.Sequential(
@@ -193,7 +201,20 @@ class grounding_model(nn.Module):
         ## [1024, 13, 13], [512, 26, 26], [256, 52, 52]
         batch_size = image.size(0)
         raw_fvisu = self.visumodel(image)
+        # raw_fvisu = [feat.to('cuda:0') for feat in self.visumodel(image.to('cuda:1'))]
         fvisu = []
+        '''if int(im_id) in [1871, 2998, 3096, 3990, 6292, 7803, 9285, 9538, 9855, 19135, 19298, 20160, 27247, 37455, 40375]:
+            for i, fmap in enumerate(raw_fvisu):
+                ix = 1
+                for _ in range(3):
+                    for _ in range(3):
+                        ax = plt.subplot(3, 3, ix)
+                        ax.set_xticks([])
+                        ax.set_yticks([])
+                        plt.imshow(fmap[0, ix-1,:, :].cpu(), cmap='gray')
+                        ix += 1
+                plt.savefig("img_feat_maps/"+im_id+"_"+str(i)+".jpg")'''
+
         for ii in range(len(raw_fvisu)):
             fvisu.append(self.mapping_visu._modules[str(ii)](raw_fvisu[ii]))
             fvisu[ii] = F.normalize(fvisu[ii], p=2, dim=1)
@@ -205,13 +226,15 @@ class grounding_model(nn.Module):
             word_id = word_id[:, :max_len]
             raw_flang = self.textmodel(word_id)
         else:
-            all_encoder_layers, _ = self.textmodel(word_id, \
-                token_type_ids=None, attention_mask=word_mask)
-            ## Sentence feature at the first position [cls]
-            raw_flang = (all_encoder_layers[-1][:,0,:] + all_encoder_layers[-2][:,0,:]\
-                 + all_encoder_layers[-3][:,0,:] + all_encoder_layers[-4][:,0,:])/4
-            ## fix bert during training
-            raw_flang = raw_flang.detach()
+            with torch.no_grad():
+                all_encoder_layers, _ = self.textmodel(word_id,
+                                                       token_type_ids=None,
+                                                       attention_mask=word_mask)
+                ## Sentence feature at the first position [cls]
+                raw_flang = (all_encoder_layers[-1][:, 0, :] + all_encoder_layers[-2][:, 0, :] +
+                             all_encoder_layers[-3][:, 0, :] + all_encoder_layers[-4][:, 0, :])/4
+                ## fix bert during training
+                raw_flang = raw_flang.detach()
         flang = self.mapping_lang(raw_flang)
         flang = F.normalize(flang, p=2, dim=1)
 
@@ -230,6 +253,7 @@ class grounding_model(nn.Module):
             intmd_fea.append(self.fcn_emb._modules[str(ii)](flangvisu[ii]))
             outbox.append(self.fcn_out._modules[str(ii)](intmd_fea[ii]))
         return outbox
+
 
 if __name__ == "__main__":
     import sys

@@ -8,21 +8,16 @@ Based on:
 https://github.com/chenxi116/TF-phrasecut-public/blob/master/build_batches.py
 """
 
-import os
 import sys
 import cv2
 import json
-import uuid
-import tqdm
 import math
 import torch
 import random
 # import h5py
 import numpy as np
 import os.path as osp
-import scipy.io as sio
 import torch.utils.data as data
-from collections import OrderedDict
 sys.path.append('.')
 import utils
 from utils import Corpus
@@ -41,11 +36,12 @@ sys.modules['utils'] = utils
 
 cv2.setNumThreads(0)
 
+
 def read_examples(input_line, unique_id):
     """Read a list of `InputExample`s from an input file."""
     examples = []
     # unique_id = 0
-    line = input_line #reader.readline()
+    line = input_line           # reader.readline()
     # if not line:
     #     break
     line = line.strip()
@@ -62,15 +58,19 @@ def read_examples(input_line, unique_id):
     # unique_id += 1
     return examples
 
+
 def bbox_randscale(bbox, miniou=0.75):
-    w,h = bbox[2]-bbox[0], bbox[3]-bbox[1]
+    w, h = bbox[2]-bbox[0], bbox[3]-bbox[1]
     scale_shrink = (1-math.sqrt(miniou))/2.
     scale_expand = (math.sqrt(1./miniou)-1)/2.
-    w1,h1 = random.uniform(-scale_expand, scale_shrink)*w, random.uniform(-scale_expand, scale_shrink)*h
-    w2,h2 = random.uniform(-scale_shrink, scale_expand)*w, random.uniform(-scale_shrink, scale_expand)*h
-    bbox[0],bbox[2] = bbox[0]+w1,bbox[2]+w2
-    bbox[1],bbox[3] = bbox[1]+h1,bbox[3]+h2
+    w1, h1 = random.uniform(-scale_expand, scale_shrink) * \
+        w, random.uniform(-scale_expand, scale_shrink)*h
+    w2, h2 = random.uniform(-scale_shrink, scale_expand) * \
+        w, random.uniform(-scale_shrink, scale_expand)*h
+    bbox[0], bbox[2] = bbox[0]+w1, bbox[2]+w2
+    bbox[1], bbox[3] = bbox[1]+h1, bbox[3]+h2
     return bbox
+
 
 ## Bert text encoding
 class InputExample(object):
@@ -78,6 +78,7 @@ class InputExample(object):
         self.unique_id = unique_id
         self.text_a = text_a
         self.text_b = text_b
+
 
 class InputFeatures(object):
     """A single set of features of data."""
@@ -87,6 +88,7 @@ class InputFeatures(object):
         self.input_ids = input_ids
         self.input_mask = input_mask
         self.input_type_ids = input_type_ids
+
 
 def convert_examples_to_features(examples, seq_length, tokenizer):
     """Loads a data file into a list of `InputBatch`s."""
@@ -148,8 +150,10 @@ def convert_examples_to_features(examples, seq_length, tokenizer):
                 input_type_ids=input_type_ids))
     return features
 
+
 class DatasetNotFoundError(Exception):
     pass
+
 
 class ReferDataset(data.Dataset):
     SUPPORTED_DATASETS = {
@@ -241,6 +245,7 @@ class ReferDataset(data.Dataset):
             bbox = np.array(bbox, dtype=int)
 
         img_path = osp.join(self.im_dir, img_file)
+        #print(img_path)
         img = cv2.imread(img_path)
         ## duplicate channel if gray image
         if img.shape[-1] > 1:
@@ -301,7 +306,7 @@ class ReferDataset(data.Dataset):
             img, _, ratio, dw, dh = letterbox(img, None, self.imsize)
             bbox[0], bbox[2] = bbox[0]*ratio+dw, bbox[2]*ratio+dw
             bbox[1], bbox[3] = bbox[1]*ratio+dh, bbox[3]*ratio+dh
-
+        word = phrase 
         ## Norm, to tensor
         if self.transform is not None:
             img = self.transform(img)
@@ -317,16 +322,15 @@ class ReferDataset(data.Dataset):
             word_id = features[0].input_ids
             word_mask = features[0].input_mask
         if self.testmode:
-            return img, np.array(word_id, dtype=int), np.array(word_mask, dtype=int), \
+            return img,phrase, np.array(word_id, dtype=int), np.array(word_mask, dtype=int), \
                 np.array(bbox, dtype=np.float32), np.array(ratio, dtype=np.float32), \
                 np.array(dw, dtype=np.float32), np.array(dh, dtype=np.float32), self.images[idx][0]
         else:
             return img, np.array(word_id, dtype=int), np.array(word_mask, dtype=int), \
             np.array(bbox, dtype=np.float32)
 
+
 if __name__ == '__main__':
-    import nltk
-    import argparse
     from torch.utils.data import DataLoader
     from torchvision.transforms import Compose, ToTensor, Normalize
     # from utils.transforms import ResizeImage, ResizeAnnotation
@@ -357,17 +361,17 @@ if __name__ == '__main__':
     ])
 
     refer_val = ReferDataset(data_root=args.data,
-                         dataset=args.dataset,
-                         split='val',
-                         imsize = args.size,
-                         transform=input_transform,
-                         max_query_len=args.time,
-                         testmode=True)
+                             dataset=args.dataset,
+                             split='val',
+                             imsize=args.size,
+                             transform=input_transform,
+                             max_query_len=args.time,
+                             testmode=True)
     val_loader = DataLoader(refer_val, batch_size=8, shuffle=False,
-                              pin_memory=False, num_workers=0)
+                            pin_memory=False, num_workers=0)
 
 
-    bbox_list=[]
+    bbox_list = []
     for batch_idx, (imgs, masks, word_id, word_mask, bbox) in enumerate(val_loader):
         bboxes = (bbox[:,2:]-bbox[:,:2]).numpy().tolist()
         for bbox in bboxes:

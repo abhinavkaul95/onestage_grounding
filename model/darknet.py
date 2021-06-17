@@ -3,33 +3,30 @@ from __future__ import division
 import math
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torch.autograd import Variable
 import numpy as np
 from collections import defaultdict, OrderedDict
 
-from PIL import Image
-
 # from utils.parse_config import *
-from utils.utils import *
+from utils.utils import bbox_iou, xyxy2xywh
 # import matplotlib.pyplot as plt
 # import matplotlib.patches as patches
 
-exist_id = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, \
-    11, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, \
-    23, 24, 25, 27, 28, 31, 32, 33, 34, 35, 36, \
-    37, 38, 39, 40, 41, 42, 43, 44, 46, 47, 48, \
-    49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, \
-    60, 61, 62, 63, 64, 65, 67, 70, 72, 73, 74, \
-    75, 76, 77, 78, 79, 80, 81, 82, 84, 85, 86, \
-    87, 88, 89, 90]
+exist_id = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+            11, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
+            23, 24, 25, 27, 28, 31, 32, 33, 34, 35, 36,
+            37, 38, 39, 40, 41, 42, 43, 44, 46, 47, 48,
+            49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59,
+            60, 61, 62, 63, 64, 65, 67, 70, 72, 73, 74,
+            75, 76, 77, 78, 79, 80, 81, 82, 84, 85, 86,
+            87, 88, 89, 90]
 catmap_dict = OrderedDict()
 for ii in range(len(exist_id)):
     catmap_dict[exist_id[ii]] = ii
 
-def build_object_targets(
-    pred_boxes, pred_conf, pred_cls, target, anchors, num_anchors, num_classes, grid_size, ignore_thres, img_dim
-):
+
+def build_object_targets(pred_boxes, pred_conf, pred_cls, target, anchors,
+                         num_anchors, num_classes, grid_size, ignore_thres, img_dim):
     nB = target.size(0)
     nA = num_anchors
     nC = num_classes
@@ -61,7 +58,8 @@ def build_object_targets(
             # Get shape of gt box
             gt_box = torch.FloatTensor(np.array([0, 0, gw, gh])).unsqueeze(0)
             # Get shape of anchor box
-            anchor_shapes = torch.FloatTensor(np.concatenate((np.zeros((len(anchors), 2)), np.array(anchors)), 1))
+            anchor_shapes = torch.FloatTensor(np.concatenate(
+                (np.zeros((len(anchors), 2)), np.array(anchors)), 1))
             # Calculate iou between gt and anchor shapes
             anch_ious = bbox_iou(gt_box, anchor_shapes)
             # Where the overlap is larger than threshold set mask to zero (ignore)
@@ -96,18 +94,20 @@ def build_object_targets(
 
     return nGT, nCorrect, mask, conf_mask, tx, ty, tw, th, tconf, tcls
 
+
 def parse_model_config(path):
     """Parses the yolo-v3 layer configuration file and returns module definitions"""
     file = open(path, 'r')
     lines = file.read().split('\n')
     lines = [x for x in lines if x and not x.startswith('#')]
-    lines = [x.rstrip().lstrip() for x in lines] # get rid of fringe whitespaces
+    lines = [x.rstrip().lstrip() for x in lines]  # get rid of fringe whitespaces
     module_defs = []
     for line in lines:
-        if line.startswith('['): # This marks the start of a new block
+        if line.startswith('['):  # This marks the start of a new block
             module_defs.append({})
             module_defs[-1]['type'] = line[1:-1].rstrip()
-            if module_defs[-1]['type'] == 'convolutional' or module_defs[-1]['type'] == 'yoloconvolutional':
+            if (module_defs[-1]['type'] == 'convolutional' or
+                    module_defs[-1]['type'] == 'yoloconvolutional'):
                 module_defs[-1]['batch_normalize'] = 0
         else:
             key, value = line.split("=")
@@ -115,38 +115,17 @@ def parse_model_config(path):
             module_defs[-1][key.rstrip()] = value.strip()
     return module_defs
 
-class ConvBatchNormReLU(nn.Sequential):
-    def __init__(
-        self,
-        in_channels,
-        out_channels,
-        kernel_size,
-        stride,
-        padding,
-        dilation,
-        leaky=False,
-        relu=True,
-    ):
-        super(ConvBatchNormReLU, self).__init__()
-        self.add_module(
-            "conv",
-            nn.Conv2d(
-                in_channels=in_channels,
-                out_channels=out_channels,
-                kernel_size=kernel_size,
-                stride=stride,
-                padding=padding,
-                dilation=dilation,
-                bias=False,
-            ),
-        )
-        self.add_module(
-            "bn",
-            nn.BatchNorm2d(
-                num_features=out_channels, eps=1e-5, momentum=0.999, affine=True
-            ),
-        )
 
+class ConvBatchNormReLU(nn.Sequential):
+    def __init__(self, in_channels, out_channels, kernel_size, stride, padding,
+                 dilation, leaky=False, relu=True):
+        super(ConvBatchNormReLU, self).__init__()
+        self.add_module("conv", nn.Conv2d(in_channels=in_channels,
+                                          out_channels=out_channels, kernel_size=kernel_size,
+                                          stride=stride, padding=padding, dilation=dilation,
+                                          bias=False))
+        self.add_module("bn", nn.BatchNorm2d(num_features=out_channels,
+                                             eps=1e-5, momentum=0.999, affine=True))
         if leaky:
             self.add_module("relu", nn.LeakyReLU(0.1))
         elif relu:
@@ -155,9 +134,12 @@ class ConvBatchNormReLU(nn.Sequential):
     def forward(self, x):
         return super(ConvBatchNormReLU, self).forward(x)
 
+
 class MyUpsample2(nn.Module):
     def forward(self, x):
-        return x[:, :, :, None, :, None].expand(-1, -1, -1, 2, -1, 2).reshape(x.size(0), x.size(1), x.size(2)*2, x.size(3)*2)
+        return x[:, :, :, None, :, None].expand(-1, -1, -1, 2, -1, 2).\
+            reshape(x.size(0), x.size(1), x.size(2)*2, x.size(3)*2)
+
 
 def create_modules(module_defs):
     """
@@ -205,7 +187,7 @@ def create_modules(module_defs):
 
         elif module_def["type"] == "upsample":
             # upsample = nn.Upsample(scale_factor=int(module_def["stride"]), mode="nearest")
-            assert(int(module_def["stride"])==2)
+            assert(int(module_def["stride"]) == 2)
             upsample = MyUpsample2()
             modules.add_module("upsample_%d" % i, upsample)
 
@@ -236,11 +218,13 @@ def create_modules(module_defs):
 
     return hyperparams, module_list
 
+
 class EmptyLayer(nn.Module):
     """Placeholder for 'route' and 'shortcut' layers"""
 
     def __init__(self):
         super(EmptyLayer, self).__init__()
+
 
 class YOLOLayer(nn.Module):
     """Detection layer"""
@@ -284,7 +268,8 @@ class YOLOLayer(nn.Module):
         grid_x = torch.arange(nG).repeat(nG, 1).view([1, 1, nG, nG]).type(FloatTensor)
         grid_y = torch.arange(nG).repeat(nG, 1).t().view([1, 1, nG, nG]).type(FloatTensor)
         # scaled_anchors = FloatTensor([(a_w / stride, a_h / stride) for a_w, a_h in self.anchors])
-        scaled_anchors = FloatTensor([(a_w / (416 / nG), a_h / (416 / nG)) for a_w, a_h in self.anchors])
+        scaled_anchors = FloatTensor(
+            [(a_w / (416 / nG), a_h / (416 / nG)) for a_w, a_h in self.anchors])
         anchor_w = scaled_anchors[:, 0:1].view((1, nA, 1, 1))
         anchor_h = scaled_anchors[:, 1:2].view((1, nA, 1, 1))
 
@@ -298,9 +283,9 @@ class YOLOLayer(nn.Module):
         # Training
         if targets is not None:
             targets = targets.clone()
-            targets[:,:,1:] = targets[:,:,1:]/self.image_dim
+            targets[:, :, 1:] = targets[:, :, 1:]/self.image_dim
             for b_i in range(targets.shape[0]):
-                targets[b_i,:,1:] = xyxy2xywh(targets[b_i,:,1:])
+                targets[b_i, :, 1:] = xyxy2xywh(targets[b_i, :, 1:])
 
             if x.is_cuda:
                 self.mse_loss = self.mse_loss.cuda()
@@ -321,7 +306,7 @@ class YOLOLayer(nn.Module):
             )
 
             nProposals = int((pred_conf > 0.5).sum().item())
-            recall = float(nCorrect / nGT)  if nGT else 1
+            recall = float(nCorrect / nGT) if nGT else 1
             precision = float(nCorrect / nProposals) if nProposals else 0
 
             # Handle masks
@@ -345,23 +330,13 @@ class YOLOLayer(nn.Module):
             loss_y = self.mse_loss(y[mask], ty[mask])
             loss_w = self.mse_loss(w[mask], tw[mask])
             loss_h = self.mse_loss(h[mask], th[mask])
-            loss_conf = self.bce_loss(pred_conf[conf_mask_false], tconf[conf_mask_false]) + self.bce_loss(
-                pred_conf[conf_mask_true], tconf[conf_mask_true]
-            )
+            loss_conf = self.bce_loss(pred_conf[conf_mask_false], tconf[conf_mask_false]) +\
+                self.bce_loss(pred_conf[conf_mask_true], tconf[conf_mask_true])
             loss_cls = (1 / nB) * self.ce_loss(pred_cls[mask], torch.argmax(tcls[mask], 1))
             loss = loss_x + loss_y + loss_w + loss_h + loss_conf + loss_cls
-            return (
-                loss,
-                loss_x.item(),
-                loss_y.item(),
-                loss_w.item(),
-                loss_h.item(),
-                loss_conf.item(),
-                loss_cls.item(),
-                recall,
-                precision,
-            )
-
+            return (loss, loss_x.item(), loss_y.item(), loss_w.item(),
+                    loss_h.item(), loss_conf.item(), loss_cls.item(), recall,
+                    precision)
         else:
             # If not in training phase return predictions
             output = torch.cat(
@@ -373,6 +348,7 @@ class YOLOLayer(nn.Module):
                 -1,
             )
             return output
+
 
 class Darknet(nn.Module):
     """YOLOv3 object detection model"""
@@ -404,7 +380,7 @@ class Darknet(nn.Module):
                 layer_i = int(module_def["from"])
                 x = layer_outputs[-1] + layer_outputs[layer_i]
             elif module_def["type"] == "yoloconvolutional":
-                output.append(x)    ## save final feature block
+                output.append(x)  # save final feature block
                 x = module(x)
             elif module_def["type"] == "yolo":
                 # Train phase: get loss
@@ -419,14 +395,17 @@ class Darknet(nn.Module):
                 # x = module(x)
                 # output.append(x)
             layer_outputs.append(x)
-
         self.losses["recall"] /= 3
         self.losses["precision"] /= 3
         # return sum(output) if is_training else torch.cat(output, 1)
         # return torch.cat(output, 1)
         if self.obj_out:
-            return output, sum(output_obj) if is_training else torch.cat(output_obj, 1), self.losses["precision"], self.losses["recall"]
-            # return output, sum(output_obj)/(len(output_obj)*batch) if is_training else torch.cat(output_obj, 1)
+            if is_training:
+                return output, sum(output_obj)
+            else:
+                return torch.cat(output_obj, 1), self.losses["precision"], self.losses["recall"]
+            # return output, sum(output_obj)/(len(output_obj)*batch)
+            # if is_training else torch.cat(output_obj, 1)
         else:
             return output
 
@@ -435,7 +414,7 @@ class Darknet(nn.Module):
 
         # Open the weights file
         fp = open(weights_path, "rb")
-        if self.config_path=='./model/yolo9000.cfg':
+        if self.config_path == './model/yolo9000.cfg':
             header = np.fromfile(fp, dtype=np.int32, count=4)  # First five are header values
         else:
             header = np.fromfile(fp, dtype=np.int32, count=5)  # First five are header values
@@ -455,30 +434,32 @@ class Darknet(nn.Module):
                     bn_layer = module[1]
                     num_b = bn_layer.bias.numel()  # Number of biases
                     # Bias
-                    bn_b = torch.from_numpy(weights[ptr : ptr + num_b]).view_as(bn_layer.bias)
+                    bn_b = torch.from_numpy(weights[ptr: ptr + num_b]).view_as(bn_layer.bias)
                     bn_layer.bias.data.copy_(bn_b)
                     ptr += num_b
                     # Weight
-                    bn_w = torch.from_numpy(weights[ptr : ptr + num_b]).view_as(bn_layer.weight)
+                    bn_w = torch.from_numpy(weights[ptr: ptr + num_b]).view_as(bn_layer.weight)
                     bn_layer.weight.data.copy_(bn_w)
                     ptr += num_b
                     # Running Mean
-                    bn_rm = torch.from_numpy(weights[ptr : ptr + num_b]).view_as(bn_layer.running_mean)
+                    bn_rm = torch.from_numpy(
+                        weights[ptr: ptr + num_b]).view_as(bn_layer.running_mean)
                     bn_layer.running_mean.data.copy_(bn_rm)
                     ptr += num_b
                     # Running Var
-                    bn_rv = torch.from_numpy(weights[ptr : ptr + num_b]).view_as(bn_layer.running_var)
+                    bn_rv = torch.from_numpy(
+                        weights[ptr: ptr + num_b]).view_as(bn_layer.running_var)
                     bn_layer.running_var.data.copy_(bn_rv)
                     ptr += num_b
                 else:
                     # Load conv. bias
                     num_b = conv_layer.bias.numel()
-                    conv_b = torch.from_numpy(weights[ptr : ptr + num_b]).view_as(conv_layer.bias)
+                    conv_b = torch.from_numpy(weights[ptr: ptr + num_b]).view_as(conv_layer.bias)
                     conv_layer.bias.data.copy_(conv_b)
                     ptr += num_b
                 # Load conv. weights
                 num_w = conv_layer.weight.numel()
-                conv_w = torch.from_numpy(weights[ptr : ptr + num_w]).view_as(conv_layer.weight)
+                conv_w = torch.from_numpy(weights[ptr: ptr + num_w]).view_as(conv_layer.weight)
                 conv_layer.weight.data.copy_(conv_w)
                 ptr += num_w
 
@@ -494,7 +475,8 @@ class Darknet(nn.Module):
         self.header_info.tofile(fp)
 
         # Iterate through layers
-        for i, (module_def, module) in enumerate(zip(self.module_defs[:cutoff], self.module_list[:cutoff])):
+        for i, (module_def, module) in enumerate(
+                zip(self.module_defs[:cutoff], self.module_list[:cutoff])):
             if module_def["type"] == "convolutional":
                 conv_layer = module[0]
                 # If batch norm, load bn first

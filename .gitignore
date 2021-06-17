@@ -1,0 +1,7 @@
+data
+ln_data
+saved_models
+logs
+.mypy_cache/
+**/__pycache__
+saves*
